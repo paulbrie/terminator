@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/tauri/main/crates/tauri-config-schema/schema.json",
+  "productName": "Terminator",
+  "version": "0.1.0",
+  "identifier": "com.terminator.dev",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Terminator",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "decorations": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --color-background: #1a1b26;
+  --color-foreground: #c0caf5;
+  --color-card: #1f2335;
+  --color-card-foreground: #c0caf5;
+  --color-popover: #1f2335;
+  --color-popover-foreground: #c0caf5;
+  --color-primary: #7aa2f7;
+  --color-primary-foreground: #1a1b26;
+  --color-secondary: #292e42;
+  --color-secondary-foreground: #a9b1d6;
+  --color-muted: #292e42;
+  --color-muted-foreground: #565f89;
+  --color-accent: #292e42;
+  --color-accent-foreground: #c0caf5;
+  --color-destructive: #f7768e;
+  --color-destructive-foreground: #1a1b26;
+  --color-border: #292e42;
+  --color-input: #292e42;
+  --color-ring: #7aa2f7;
+  --radius: 0.5rem;
+  --color-sidebar-background: #1a1b26;
+  --color-sidebar-foreground: #a9b1d6;
+  --color-sidebar-primary: #7aa2f7;
+  --color-sidebar-primary-foreground: #1a1b26;
+  --color-sidebar-accent: #292e42;
+  --color-sidebar-accent-foreground: #c0caf5;
+  --color-sidebar-border: #292e42;
+  --color-sidebar-ring: #7aa2f7;
+  --color-chart-1: #7aa2f7;
+  --color-chart-2: #9ece6a;
+  --color-chart-3: #e0af68;
+  --color-chart-4: #bb9af7;
+  --color-chart-5: #f7768e;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #1a1b26;
+  color: #a9b1d6;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  /* No extra env padding — handled by TabBar */
+}
+
+/* Hide scrollbars in terminals but allow scrolling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #292e42;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #414868;
+}
+
+/* xterm.js container must have explicit dimensions */
+.xterm {
+  height: 100%;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 0.3; }
+  50% { transform: scale(1.8); opacity: 0; }
+}
