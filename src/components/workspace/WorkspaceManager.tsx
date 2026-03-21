@@ -6,8 +6,8 @@ import {
   deleteWorkspace,
   type WorkspaceFile,
 } from "../../lib/tauri-commands";
-import { workspaceStore$ } from "../../stores/useWorkspaceStore";
-import { agentStore$ } from "../../stores/useAgentStore";
+import { $workspaceStore } from "../../stores/useWorkspaceStore";
+import { $agentStore } from "../../stores/useAgentStore";
 import { spawnAgent } from "../../lib/tauri-commands";
 import { createAgentConfig } from "../../lib/agent-registry";
 import { generateId, getAllPaneIds } from "../../lib/layout-engine";
@@ -45,8 +45,8 @@ export function WorkspaceManager({ onClose }: WorkspaceManagerProps) {
 
   const handleSave = async () => {
     if (!saveName.trim()) return;
-    const store = workspaceStore$.getValue();
-    const agents = agentStore$.getValue().agents;
+    const store = $workspaceStore.getValue();
+    const agents = $agentStore.getValue().agents;
 
     const savedLayout: SavedLayout = {
       tabs: store.tabs.map((tab) => {
@@ -94,18 +94,19 @@ export function WorkspaceManager({ onClose }: WorkspaceManagerProps) {
           const config = createAgentConfig(agentType, { label });
 
           const backendId = await spawnAgent(config);
-          agentStore$.getValue().agents[oldPaneId] = {
+          $agentStore.getValue().agents[oldPaneId] = {
             id: oldPaneId,
             config,
             state: "running",
             backendId,
             createdAt: Date.now(),
+            ptyActivity: "idle",
           };
         }
 
         if (i === 0) {
           // Replace current tab's layout
-          const ws = workspaceStore$.getValue();
+          const ws = $workspaceStore.getValue();
           ws.tabs = ws.tabs.map((t, idx) =>
             idx === 0
               ? { ...t, label: savedTab.label, rootNode: savedTab.rootNode }
@@ -113,7 +114,7 @@ export function WorkspaceManager({ onClose }: WorkspaceManagerProps) {
           );
         } else {
           // Add new tabs
-          const ws = workspaceStore$.getValue();
+          const ws = $workspaceStore.getValue();
           ws.tabs = [
             ...ws.tabs,
             {

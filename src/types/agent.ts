@@ -2,6 +2,9 @@ export type AgentState = "idle" | "running" | "streaming" | "done" | "error";
 export type AgentType = "shell" | "claude" | "gpt" | "custom";
 export type ViewMode = "tabs" | "grid";
 
+/** PTY activity state inferred from output timing */
+export type PtyActivity = "busy" | "prompt" | "idle" | "waiting_input";
+
 export interface AgentConfig {
   agent_type: AgentType;
   label: string;
@@ -17,4 +20,6 @@ export interface AgentSession {
   state: AgentState;
   backendId: string | null; // the PTY process ID from Tauri
   createdAt: number;
+  ptyActivity: PtyActivity;
+  title?: string; // dynamic title from terminal (e.g. last command)
 }

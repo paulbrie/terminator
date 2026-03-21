@@ -1,51 +1,76 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useEffect, type ReactNode } from "react";
+import { Search, Download, X, ExternalLink, MonitorUp } from "lucide-react";
 import { TerminalView, type TerminalViewHandle } from "../terminal/TerminalView";
+import { EditorPane } from "../editor/EditorPane";
 import { AgentBadge } from "../agent/AgentBadge";
-import { AgentStatusBar } from "../agent/AgentStatusBar";
+
 import { PipeIndicator } from "../input/PipeIndicator";
 import { ExportDialog } from "../workspace/ExportDialog";
-import { useAgent, removeAgent } from "../../stores/useAgentStore";
+import { useAgent, useAgents, removeAgent, spawnAgentInPane } from "../../stores/useAgentStore";
 import {
   useActivePaneId,
   setActivePane,
   closePane,
-  movePaneTo,
-  swapPanesAction,
+  detachPane,
+  detachPaneToWindow,
+  getAllPaneIdsAcrossTabs,
+  usePaneBgColors,
+  useProjects,
+  useEditorPane,
 } from "../../stores/useWorkspaceStore";
-import {
-  setDragData,
-  getDragData,
-  computeDropZone,
-  dropZoneToDirection,
-  shouldInsertBefore,
-  type DropZone,
-} from "../../lib/drag-manager";
-
+import { PaneBgColorPicker } from "./PaneBgColorPicker";
+import { createAgentConfig, AGENT_REGISTRY, AGENT_ICONS } from "../../lib/agent-registry";
 interface PaneContainerProps {
   paneId: string;
+  isFloating?: boolean;
+  onDragStart?: (paneId: string, x: number, y: number) => void;
 }
 
-const dropZoneStyles: Record<DropZone, React.CSSProperties> = {
-  left: { left: 0, top: 0, width: "50%", height: "100%" },
-  right: { right: 0, top: 0, width: "50%", height: "100%" },
-  top: { left: 0, top: 0, width: "100%", height: "50%" },
-  bottom: { left: 0, bottom: 0, width: "100%", height: "50%" },
-  center: { inset: 0 },
-};
-
-export function PaneContainer({ paneId }: PaneContainerProps) {
+export function PaneContainer({ paneId, isFloating, onDragStart }: PaneContainerProps) {
   const agent = useAgent(paneId);
+  const agents = useAgents();
   const activePaneId = useActivePaneId();
   const isActive = activePaneId === paneId;
+  const paneBgColors = usePaneBgColors();
+  const projects = useProjects();
+  const projectBgColor = projects.find((p) => p.paneIds.includes(paneId))?.defaultBgColor;
+  const paneBgColor = paneBgColors[paneId] || projectBgColor;
   const terminalRef = useRef<TerminalViewHandle>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [exportContent, setExportContent] = useState<string | null>(null);
-  const [dropZone, setDropZone] = useState<DropZone | null>(null);
+  const editorInfo = useEditorPane(paneId);
+
+  // Auto-spawn shell in empty pane when other agents are running
+  useEffect(() => {
+    if (editorInfo) return; // Editor pane — don't auto-spawn
+    if (agent) return; // This pane has an agent, nothing to do
+    // Don't spawn if this pane has been removed from the layout (closing in progress)
+    if (!getAllPaneIdsAcrossTabs().includes(paneId)) return;
+    const otherAgents = Object.keys(agents).filter((id) => id !== paneId);
+    if (otherAgents.length === 0) return; // No other agents, keep the welcome screen
+    // Instead of showing welcome screen, auto-spawn a shell
+    const config = createAgentConfig("shell");
+    spawnAgentInPane(paneId, config);
+  }, [agent, agents, paneId, editorInfo]);
+
+  // Auto-close pane when agent process exits
+  useEffect(() => {
+    if (agent?.state !== "done") return;
+    const allPaneIds = getAllPaneIdsAcrossTabs();
+    if (allPaneIds.length > 1) {
+      // Other panes exist — close this one
+      closePane(paneId);
+      removeAgent(paneId);
+    } else {
+      // Last pane — just remove the agent to show welcome screen
+      removeAgent(paneId);
+    }
+  }, [agent?.state, paneId]);
 
   const handleClose = (e: React.MouseEvent) => {
     e.stopPropagation();
-    removeAgent(paneId);
     closePane(paneId);
+    removeAgent(paneId);
   };
 
   const handleSearch = (e: React.MouseEvent) => {
@@ -59,162 +84,88 @@ export function PaneContainer({ paneId }: PaneContainerProps) {
     setExportContent(content);
   };
 
-  // Drag source: the header is the drag handle
-  const handleDragStart = useCallback(
-    (e: React.DragEvent) => {
-      setDragData(e.nativeEvent, { sourcePaneId: paneId });
-      // Ghost image
-      if (e.dataTransfer) {
-        const ghost = document.createElement("div");
-        ghost.textContent = agent?.config.label ?? paneId;
-        ghost.style.cssText =
-          "padding:4px 12px;background:#7aa2f7;color:#1a1b26;border-radius:4px;font-size:12px;font-family:monospace;position:fixed;top:-100px";
-        document.body.appendChild(ghost);
-        e.dataTransfer.setDragImage(ghost, 0, 0);
-        setTimeout(() => document.body.removeChild(ghost), 0);
-      }
-    },
-    [paneId, agent]
-  );
-
-  // Drop target: the whole pane
-  const handleDragOver = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (rect) {
-        setDropZone(computeDropZone(e.nativeEvent, rect));
-      }
-    },
-    []
-  );
-
-  const handleDragLeave = useCallback(() => {
-    setDropZone(null);
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDropZone(null);
-
-      const data = getDragData(e.nativeEvent);
-      if (!data || data.sourcePaneId === paneId) return;
-
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-
-      const zone = computeDropZone(e.nativeEvent, rect);
-      const direction = dropZoneToDirection(zone);
-
-      if (direction) {
-        movePaneTo(data.sourcePaneId, paneId, direction, shouldInsertBefore(zone));
-      } else {
-        // Center drop = swap
-        swapPanesAction(data.sourcePaneId, paneId);
-      }
-    },
-    [paneId]
-  );
-
   return (
     <div
       ref={containerRef}
       onMouseDown={() => setActivePane(paneId)}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       style={{
         display: "flex",
         flexDirection: "column",
         width: "100%",
         height: "100%",
-        border: `1px solid ${isActive ? "#7aa2f7" : "#292e42"}`,
-        borderRadius: 4,
+        border: `1px solid ${isActive && agent ? "#7aa2f7" : "#292e42"}`,
+        borderRadius: isFloating ? 0 : 4,
         overflow: "hidden",
-        backgroundColor: "#1a1b26",
+        backgroundColor: paneBgColor || "#1a1b26",
         position: "relative",
       }}
     >
-      {/* Drop zone highlight */}
-      {dropZone && (
+
+      {/* Pane header — only shown when an agent is running */}
+      {!isFloating && agent && (
         <div
+          onMouseDown={(e) => {
+            if (e.button !== 0 || !onDragStart) return;
+            // Don't start drag if clicking on a button/icon
+            const target = e.target as HTMLElement;
+            if (target.closest("button")) return;
+            e.preventDefault();
+            e.stopPropagation();
+            onDragStart(paneId, e.clientX, e.clientY);
+          }}
           style={{
-            position: "absolute",
-            ...dropZoneStyles[dropZone],
-            backgroundColor: dropZone === "center" ? "#7aa2f715" : "#7aa2f720",
-            border: "2px dashed #7aa2f7",
-            borderRadius: 4,
-            zIndex: 5,
-            pointerEvents: "none",
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
+            padding: "4px 8px",
+            backgroundColor: "#16161e",
+            borderBottom: "1px solid #292e42",
+            minHeight: 28,
+            userSelect: "none",
+            cursor: onDragStart ? "grab" : undefined,
           }}
         >
-          <span
-            style={{
-              fontSize: 15,
-              color: "#7aa2f7",
-              fontFamily: "monospace",
-              backgroundColor: "#1a1b26cc",
-              padding: "2px 8px",
-              borderRadius: 4,
-            }}
+          <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
+            {agent ? (
+              <AgentBadge
+                state={agent.state}
+                label={agent.config.label}
+                ptyActivity={agent.ptyActivity}
+              />
+            ) : (
+              <span style={{ fontSize: 12, color: "#565f89", fontFamily: "monospace" }}>Terminator</span>
+            )}
+            <PipeIndicator paneId={paneId} />
+          </div>
+          <div
+            onMouseDown={(e) => { e.stopPropagation(); }}
+            style={{ display: "flex", gap: 0, alignItems: "center", cursor: "default" }}
           >
-            {dropZone === "center" ? "Swap" : `Split ${dropZone}`}
-          </span>
+            <PaneBgColorPicker paneId={paneId} currentColor={paneBgColor} />
+            <HeaderBtn title="Detach to floating window" onClick={(e) => { e.stopPropagation(); detachPane(paneId); }}><ExternalLink size={14} /></HeaderBtn>
+            <HeaderBtn title="Detach to new window" onClick={(e) => { e.stopPropagation(); detachPaneToWindow(paneId); }}><MonitorUp size={14} /></HeaderBtn>
+            <HeaderBtn title="Search (⌘F)" onClick={handleSearch}><Search size={16} /></HeaderBtn>
+            <HeaderBtn title="Export output" onClick={handleExport}><Download size={16} /></HeaderBtn>
+            <HeaderBtn title="Close pane" onClick={handleClose}><X size={16} /></HeaderBtn>
+          </div>
         </div>
       )}
 
-      {/* Pane header — draggable */}
-      <div
-        draggable
-        onDragStart={handleDragStart}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "4px 8px",
-          backgroundColor: "#16161e",
-          borderBottom: "1px solid #292e42",
-          minHeight: 28,
-          userSelect: "none",
-          cursor: "grab",
-        }}
-      >
-        <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
-          {agent ? (
-            <AgentBadge
-              agentType={agent.config.agent_type}
-              state={agent.state}
-              label={agent.config.label}
-            />
-          ) : (
-            <span style={{ fontSize: 15, color: "#565f89" }}>Empty</span>
-          )}
-          <PipeIndicator paneId={paneId} />
+      {/* Editor / Terminal / Welcome */}
+      {editorInfo ? (
+        <EditorPane paneId={paneId} filePath={editorInfo.filePath} />
+      ) : agent ? (
+        <div style={{ flex: 1, overflow: "hidden", padding: "4px 6px" }}>
+          <TerminalView
+            ref={terminalRef}
+            paneId={paneId}
+            agentBackendId={agent.backendId}
+            agentType={agent.config.agent_type}
+            bgColor={paneBgColor}
+          />
         </div>
-        <div style={{ display: "flex", gap: 2 }}>
-          <HeaderBtn icon="⌕" title="Search (⌘F)" onClick={handleSearch} />
-          <HeaderBtn icon="↓" title="Export output" onClick={handleExport} />
-          <HeaderBtn icon="×" title="Close pane" onClick={handleClose} />
-        </div>
-      </div>
-
-      {/* Terminal */}
-      <div style={{ flex: 1, overflow: "hidden" }}>
-        <TerminalView
-          ref={terminalRef}
-          paneId={paneId}
-          agentBackendId={agent?.backendId ?? null}
-        />
-      </div>
-
-      {/* Per-pane status bar */}
-      {agent && <AgentStatusBar agent={agent} />}
+      ) : (
+        <WelcomeScreen paneId={paneId} />
+      )}
 
       {/* Export dialog */}
       {exportContent !== null && (
@@ -228,30 +179,130 @@ export function PaneContainer({ paneId }: PaneContainerProps) {
   );
 }
 
+
 function HeaderBtn({
-  icon,
   title,
   onClick,
+  children,
 }: {
-  icon: string;
   title: string;
   onClick: (e: React.MouseEvent) => void;
+  children: ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#a9b1d6"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#565f89"; }}
       style={{
         background: "none",
         border: "none",
         color: "#565f89",
-        fontSize: 15,
         cursor: "pointer",
         padding: "0 4px",
         lineHeight: 1,
+        display: "flex",
+        alignItems: "center",
+        transition: "color 0.15s ease",
       }}
     >
-      {icon}
+      {children}
     </button>
+  );
+}
+
+const agentIcons: Record<string, ReactNode> = Object.fromEntries(
+  Object.entries(AGENT_ICONS).map(([type, Icon]) => [type, <Icon key={type} size={20} />])
+);
+
+function WelcomeScreen({ paneId }: { paneId: string }) {
+  const handleSpawn = async (type: string) => {
+    const config = createAgentConfig(type as keyof typeof AGENT_REGISTRY);
+    await spawnAgentInPane(paneId, config);
+  };
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 24,
+        backgroundColor: "#1a1b26",
+        padding: 32,
+      }}
+    >
+      <div style={{ textAlign: "center" }}>
+        <h2
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: "#c0caf5",
+            margin: "0 0 6px",
+            fontFamily: "monospace",
+          }}
+        >
+          Terminator
+        </h2>
+        <p style={{ fontSize: 12, color: "#565f89", margin: 0, fontFamily: "monospace" }}>
+          Launch a session to get started
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: 8,
+          width: "100%",
+          maxWidth: 320,
+        }}
+      >
+        {Object.values(AGENT_REGISTRY).map((def) => (
+          <button
+            key={def.type}
+            onClick={() => handleSpawn(def.type)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 14px",
+              backgroundColor: "#16161e",
+              border: "1px solid #292e42",
+              borderRadius: 6,
+              color: "#a9b1d6",
+              fontSize: 12,
+              fontFamily: "monospace",
+              cursor: "pointer",
+              textAlign: "left",
+              transition: "border-color 0.15s, background-color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = def.color;
+              (e.currentTarget as HTMLElement).style.backgroundColor = "#1a1b26";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = "#292e42";
+              (e.currentTarget as HTMLElement).style.backgroundColor = "#16161e";
+            }}
+          >
+            <span style={{ color: def.color }}>
+              {agentIcons[def.type]}
+            </span>
+            <div>
+              <div style={{ fontWeight: 600, color: "#c0caf5", fontSize: 13 }}>{def.label}</div>
+              <div style={{ fontSize: 10, color: "#565f89", marginTop: 2 }}>{def.description}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 10, color: "#414868", fontFamily: "monospace", textAlign: "center" }}>
+        <span style={{ color: "#565f89" }}>Tip:</span> ⌘D split horizontal · ⇧⌘D split vertical · ⌘T new tab
+      </div>
+    </div>
   );
 }

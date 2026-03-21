@@ -164,7 +164,7 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
             justifyContent: "space-between",
           }}
         >
-          <span>Terminator v0.1.0</span>
+          <span>Terminator</span>
           <span>⌘? to toggle help</span>
         </div>
       </div>

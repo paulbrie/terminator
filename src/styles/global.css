@@ -82,3 +82,13 @@ body,
   0%, 100% { transform: scale(1); opacity: 0.3; }
   50% { transform: scale(1.8); opacity: 0; }
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Override xterm.js viewport background to match terminal theme */
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}

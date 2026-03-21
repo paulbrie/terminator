@@ -45,6 +45,26 @@ pub async fn spawn_agent(
         cmd.env(key, value);
     }
 
+    // Ensure TERM and locale are set for proper key handling and Unicode rendering
+    if !config.env.contains_key("TERM") {
+        cmd.env("TERM", "xterm-256color");
+    }
+    if !config.env.contains_key("LANG") {
+        cmd.env("LANG", "en_US.UTF-8");
+    }
+    if !config.env.contains_key("LC_ALL") {
+        cmd.env("LC_ALL", "en_US.UTF-8");
+    }
+
+    // Add data dir bin/ to PATH so agents can use terminator-tasks CLI
+    {
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let folder = if cfg!(debug_assertions) { ".terminator-dev" } else { ".terminator" };
+        let terminator_bin = home.join(folder).join("bin");
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{}", terminator_bin.display(), current_path));
+    }
+
     if let Some(ref cwd) = config.working_directory {
         cmd.cwd(cwd);
     }
@@ -66,7 +86,9 @@ pub async fn spawn_agent(
     // Spawn a thread to read PTY output and emit events
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; 16384];
+        // Buffer for incomplete UTF-8 sequences carried across reads
+        let mut utf8_remainder: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
@@ -74,8 +96,32 @@ pub async fn spawn_agent(
                     break;
                 }
                 Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_clone.emit(&output_event, OutputPayload { data });
+                    // Prepend any leftover bytes from previous read
+                    let chunk = if utf8_remainder.is_empty() {
+                        &buf[..n]
+                    } else {
+                        utf8_remainder.extend_from_slice(&buf[..n]);
+                        utf8_remainder.as_slice()
+                    };
+
+                    // Find the last valid UTF-8 boundary
+                    match std::str::from_utf8(chunk) {
+                        Ok(s) => {
+                            let _ = app_clone.emit(&output_event, OutputPayload { data: s.to_string() });
+                            utf8_remainder.clear();
+                        }
+                        Err(e) => {
+                            let valid_up_to = e.valid_up_to();
+                            if valid_up_to > 0 {
+                                // Safety: we just validated this range
+                                let valid = unsafe { std::str::from_utf8_unchecked(&chunk[..valid_up_to]) };
+                                let _ = app_clone.emit(&output_event, OutputPayload { data: valid.to_string() });
+                            }
+                            // Save incomplete bytes for next read
+                            let remaining = chunk[valid_up_to..].to_vec();
+                            utf8_remainder = remaining;
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = app_clone.emit(

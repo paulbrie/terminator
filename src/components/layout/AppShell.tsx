@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { TabBar } from "./TabBar";
-import { SplitPane } from "./SplitPane";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { GridView } from "./GridView";
+import { FloatingPane } from "./FloatingPane";
+import { CollapsedBar } from "./CollapsedBar";
 import { StatusBar } from "./StatusBar";
 import {
   Tooltip as ShadTooltip,
@@ -12,70 +12,155 @@ import { AgentConfigModal } from "../agent/AgentConfigModal";
 import { CommandBar } from "../input/CommandBar";
 import { PipeModal } from "../input/PipeModal";
 import { WorkspaceManager } from "../workspace/WorkspaceManager";
-import { SessionHistory } from "../workspace/SessionHistory";
 import { SettingsModal } from "../workspace/SettingsModal";
 import { HelpOverlay } from "../help/HelpOverlay";
-import { Tooltip } from "../help/Tooltip";
+import { DebugBar } from "./DebugBar";
+import { ProjectSidebar } from "./ProjectSidebar";
+import { ProcessesView } from "./ProcessesView";
+
 import {
   useActivePaneId,
-  useTabs,
-  useActiveTabId,
-  useViewMode,
-  splitPane,
+  useFloatingPanes,
   closePane,
   addTab,
+  splitPane,
   getAllActivePaneIds,
+  getAllPaneIdsAcrossTabs,
   setActivePane,
-  setActiveTab,
-  toggleViewMode,
-  workspaceStore$,
+  useSidebarOpen,
+  toggleSidebar,
 } from "../../stores/useWorkspaceStore";
 import { increaseFont, decreaseFont } from "../../stores/useSettingsStore";
 import {
   createAgent,
   removeAgent,
-  agentStore$,
+  $agentStore,
+  useAgents,
 } from "../../stores/useAgentStore";
 import { addPipe } from "../../stores/usePipeStore";
 import { spawnAgent } from "../../lib/tauri-commands";
-import { createAgentConfig } from "../../lib/agent-registry";
+import { createAgentConfig, AGENT_REGISTRY, AGENT_ICONS } from "../../lib/agent-registry";
 import { loadState } from "../../lib/persistence";
+import { installCli } from "../../lib/tauri-commands";
+import { listen } from "@tauri-apps/api/event";
 import type { AgentConfig } from "../../types/agent";
-import type { Direction } from "../../types/layout";
-
-type PendingAction =
-  | { kind: "split"; direction: Direction }
-  | { kind: "tab" }
-  | null;
-
 export function AppShell() {
-  const tabs = useTabs();
-  const activeTabId = useActiveTabId();
-  const layout = useMemo(() => {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    return tab?.rootNode ?? null;
-  }, [tabs, activeTabId]);
   const activePaneId = useActivePaneId();
-  const viewMode = useViewMode();
+  const floatingPanes = useFloatingPanes();
+  const sidebarOpen = useSidebarOpen();
+  const agents = useAgents();
+  const hasAgents = Object.keys(agents).length > 0;
 
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [showCommandBar, setShowCommandBar] = useState(false);
   const [showPipeModal, setShowPipeModal] = useState(false);
   const [showWorkspaceManager, setShowWorkspaceManager] = useState(false);
-  const [showSessionHistory, setShowSessionHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [showProcesses, setShowProcesses] = useState(false);
+
+  // Listen for reattach events from detached windows
+  useEffect(() => {
+    const unlisten = listen<{
+      paneId: string;
+      backendId: string;
+      agentConfig: AgentConfig;
+      bgColor: string | null;
+    }>("detached:reattach", (event) => {
+      const { paneId, backendId, agentConfig, bgColor } = event.payload;
+      // Re-register agent in the store
+      $agentStore.getValue().agents[paneId] = {
+        id: paneId,
+        config: agentConfig,
+        state: "running",
+        backendId,
+        createdAt: Date.now(),
+        ptyActivity: "idle",
+      };
+      // Restore bg color
+      if (bgColor) {
+        import("../../stores/useWorkspaceStore").then(({ setPaneBgColor }) => {
+          setPaneBgColor(paneId, bgColor);
+        });
+      }
+      // Add as a split on the active pane
+      const newPaneId = paneId;
+      const currentActive = $agentStore.getValue().agents[activePaneId]
+        ? activePaneId
+        : getAllActivePaneIds()[0];
+      if (currentActive && currentActive !== newPaneId) {
+        splitPane(currentActive, "horizontal", newPaneId);
+      } else {
+        addTab(newPaneId);
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [activePaneId]);
+
+  // Listen for project reattach events from detached project windows
+  useEffect(() => {
+    const unlisten = listen<{
+      projectId: string;
+      panes: Array<{
+        paneId: string;
+        backendId: string;
+        agentConfig: AgentConfig;
+        bgColor: string;
+      }>;
+    }>("detached-project:reattach", (event) => {
+      const { panes } = event.payload;
+      for (const pane of panes) {
+        // Re-register agent in the store
+        $agentStore.getValue().agents[pane.paneId] = {
+          id: pane.paneId,
+          config: pane.agentConfig,
+          state: "running",
+          backendId: pane.backendId,
+          createdAt: Date.now(),
+          ptyActivity: "idle",
+        };
+        // Restore bg color
+        if (pane.bgColor) {
+          import("../../stores/useWorkspaceStore").then(({ setPaneBgColor }) => {
+            setPaneBgColor(pane.paneId, pane.bgColor);
+          });
+        }
+        // Add pane to layout
+        const currentActive = $agentStore.getValue().agents[activePaneId]
+          ? activePaneId
+          : getAllActivePaneIds()[0];
+        if (currentActive && currentActive !== pane.paneId) {
+          splitPane(currentActive, "horizontal", pane.paneId);
+        } else {
+          addTab(pane.paneId);
+        }
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [activePaneId]);
+
+  // Install CLI helper and sync project tasks to disk on mount
+  useEffect(() => {
+    installCli().catch(() => {});
+    // Re-sync all project tasks to disk (ensures name-based folders)
+    import("../../stores/useWorkspaceStore").then(({ syncAllProjectsToDisk }) => {
+      syncAllProjectsToDisk();
+    });
+  }, []);
 
   // Restore persisted agents on mount, or spawn a fresh shell
   useEffect(() => {
     const persisted = loadState();
-    const agents = agentStore$.getValue().agents;
+    const agents = $agentStore.getValue().agents;
 
     if (persisted && persisted.agents.length > 0) {
-      // Re-spawn all persisted agents
+      const layoutPaneIds = new Set(getAllPaneIdsAcrossTabs());
+      const persistedByPaneId = new Map(persisted.agents.map((pa) => [pa.paneId, pa]));
+
+      // Restore agents whose paneId exists in the current layout
       for (const pa of persisted.agents) {
         if (agents[pa.paneId]) continue; // already alive
+        if (!layoutPaneIds.has(pa.paneId)) continue; // stale — pane no longer in layout
         const config = pa.config;
         agents[pa.paneId] = {
           id: pa.paneId,
@@ -83,16 +168,38 @@ export function AppShell() {
           state: "idle",
           backendId: null,
           createdAt: Date.now(),
+          ptyActivity: "idle",
         };
         spawnAgent(config).then((backendId) => {
-          const agent = agentStore$.getValue().agents[pa.paneId];
+          const agent = $agentStore.getValue().agents[pa.paneId];
           if (agent) {
             agent.backendId = backendId;
             agent.state = "running";
           }
         }).catch(() => {
-          const agent = agentStore$.getValue().agents[pa.paneId];
+          const agent = $agentStore.getValue().agents[pa.paneId];
           if (agent) agent.state = "error";
+        });
+      }
+
+      // Spawn a fresh shell for any layout pane that has no persisted agent
+      for (const paneId of layoutPaneIds) {
+        if (agents[paneId] || persistedByPaneId.has(paneId)) continue;
+        const config = createAgentConfig("shell");
+        agents[paneId] = {
+          id: paneId,
+          config,
+          state: "idle",
+          backendId: null,
+          createdAt: Date.now(),
+          ptyActivity: "idle",
+        };
+        spawnAgent(config).then((backendId) => {
+          const agent = $agentStore.getValue().agents[paneId];
+          if (agent) {
+            agent.backendId = backendId;
+            agent.state = "running";
+          }
         });
       }
     } else {
@@ -106,9 +213,10 @@ export function AppShell() {
           state: "idle",
           backendId: null,
           createdAt: Date.now(),
+          ptyActivity: "idle",
         };
         spawnAgent(config).then((backendId) => {
-          const agent = agentStore$.getValue().agents[initialPaneId];
+          const agent = $agentStore.getValue().agents[initialPaneId];
           if (agent) {
             agent.backendId = backendId;
             agent.state = "running";
@@ -118,43 +226,24 @@ export function AppShell() {
     }
   }, []);
 
-  const openAgentModalFor = useCallback((action: PendingAction) => {
-    setPendingAction(action);
-    setShowAgentModal(true);
-  }, []);
-
   const handleAgentSubmit = useCallback(
     async (config: AgentConfig) => {
       setShowAgentModal(false);
       const session = await createAgent(config);
-      if (pendingAction?.kind === "split") {
-        splitPane(activePaneId, pendingAction.direction, session.id);
-      } else if (pendingAction?.kind === "tab") {
-        addTab(session.id);
-      }
-      setPendingAction(null);
+      addTab(session.id);
     },
-    [pendingAction, activePaneId]
+    []
   );
 
-  const handleQuickShell = useCallback(
-    async (direction: Direction) => {
-      const config = createAgentConfig("shell");
-      const session = await createAgent(config);
-      splitPane(activePaneId, direction, session.id);
-    },
-    [activePaneId]
-  );
-
-  const handleNewShellTab = useCallback(async () => {
+  const handleNewShell = useCallback(async () => {
     const config = createAgentConfig("shell");
     const session = await createAgent(config);
     addTab(session.id);
   }, []);
 
   const handleClosePane = useCallback(() => {
-    removeAgent(activePaneId);
     closePane(activePaneId);
+    removeAgent(activePaneId);
   }, [activePaneId]);
 
   const handlePipeSubmit = useCallback(
@@ -191,6 +280,12 @@ export function AppShell() {
         decreaseFont();
         return;
       }
+      // Cmd+B: toggle sidebar
+      if (e.metaKey && e.key === "b") {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
       // Cmd+,: settings
       if (e.metaKey && e.key === ",") {
         e.preventDefault();
@@ -198,7 +293,7 @@ export function AppShell() {
         return;
       }
       // Don't process other shortcuts when command bar or modals are open
-      if (showCommandBar || showAgentModal || showPipeModal || showWorkspaceManager || showSessionHistory || showSettings || showHelp) return;
+      if (showCommandBar || showAgentModal || showPipeModal || showWorkspaceManager || showSettings || showHelp) return;
 
       // Cmd+F: search in active terminal (dispatched via custom event)
       if (e.metaKey && e.key === "f") {
@@ -212,38 +307,26 @@ export function AppShell() {
         setShowWorkspaceManager(true);
         return;
       }
-      // Cmd+H: session history
-      if (e.metaKey && e.key === "h") {
-        e.preventDefault();
-        setShowSessionHistory(true);
-        return;
-      }
-
-      // Cmd+G: toggle grid view
-      if (e.metaKey && e.key === "g") {
-        e.preventDefault();
-        toggleViewMode();
-        return;
-      }
-      // Cmd+D: quick split shell horizontal, Cmd+Shift+D: vertical
-      if (e.metaKey && e.key === "d") {
-        e.preventDefault();
-        handleQuickShell(e.shiftKey ? "vertical" : "horizontal");
-      }
       // Cmd+W: close pane
       if (e.metaKey && e.key === "w") {
         e.preventDefault();
         handleClosePane();
       }
-      // Cmd+T: new shell tab
-      if (e.metaKey && e.key === "t") {
+      // Cmd+T / Cmd+D: new shell agent
+      if (e.metaKey && (e.key === "t" || e.key === "d")) {
         e.preventDefault();
-        handleNewShellTab();
+        handleNewShell();
       }
       // Cmd+N: open agent picker
       if (e.metaKey && e.key === "n") {
         e.preventDefault();
-        openAgentModalFor({ kind: "split", direction: "horizontal" });
+        setShowAgentModal(true);
+      }
+      // Cmd+Shift+P: toggle processes view
+      if (e.metaKey && e.shiftKey && e.key === "p") {
+        e.preventDefault();
+        setShowProcesses((v) => !v);
+        return;
       }
       // Cmd+P: open pipe modal
       if (e.metaKey && e.key === "p") {
@@ -251,7 +334,7 @@ export function AppShell() {
         setShowPipeModal(true);
       }
       // Cmd+[ / Cmd+]: cycle panes
-      if (e.metaKey && !e.shiftKey && (e.key === "[" || e.key === "]")) {
+      if (e.metaKey && (e.key === "[" || e.key === "]")) {
         e.preventDefault();
         const paneIds = getAllActivePaneIds();
         const currentIdx = paneIds.indexOf(activePaneId);
@@ -261,32 +344,17 @@ export function AppShell() {
           setActivePane(paneIds[nextIdx]);
         }
       }
-      // Cmd+Shift+[ / Cmd+Shift+]: cycle tabs
-      if (e.metaKey && e.shiftKey && (e.key === "{" || e.key === "}")) {
-        e.preventDefault();
-        const storeTabs = workspaceStore$.getValue().tabs;
-        const storeActiveTabId = workspaceStore$.getValue().activeTabId;
-        const currentIdx = storeTabs.findIndex((t) => t.id === storeActiveTabId);
-        if (storeTabs.length > 1) {
-          const delta = e.key === "}" ? 1 : -1;
-          const nextIdx = (currentIdx + delta + storeTabs.length) % storeTabs.length;
-          setActiveTab(storeTabs[nextIdx].id);
-        }
-      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
-    handleQuickShell,
     handleClosePane,
-    handleNewShellTab,
-    openAgentModalFor,
+    handleNewShell,
     activePaneId,
     showCommandBar,
     showAgentModal,
     showPipeModal,
     showWorkspaceManager,
-    showSessionHistory,
     showSettings,
     showHelp,
   ]);
@@ -302,8 +370,6 @@ export function AppShell() {
         overflow: "hidden",
       }}
     >
-      {viewMode === "tabs" && <TabBar onNewTab={handleNewShellTab} />}
-
       {/* Toolbar */}
       <div
         style={{
@@ -316,32 +382,21 @@ export function AppShell() {
         }}
       >
         <ToolButton
-          label="Split ―"
-          shortcut="⌘D"
-          onClick={() => handleQuickShell("horizontal")}
-        />
-        <ToolButton
-          label="Split |"
-          shortcut="⇧⌘D"
-          onClick={() => handleQuickShell("vertical")}
+          label="Projects"
+          shortcut="⌘B"
+          onClick={() => toggleSidebar()}
         />
         <div style={{ width: 1, height: 16, backgroundColor: "#292e42" }} />
         <ToolButton
           label="+ Agent"
           shortcut="⌘N"
           accent
-          onClick={() => openAgentModalFor({ kind: "split", direction: "horizontal" })}
+          onClick={() => setShowAgentModal(true)}
         />
         <ToolButton
           label="Pipe"
           shortcut="⌘P"
           onClick={() => setShowPipeModal(true)}
-        />
-        <ToolButton
-          label={viewMode === "grid" ? "Tabs" : "Grid"}
-          shortcut="⌘G"
-          accent={viewMode === "grid"}
-          onClick={toggleViewMode}
         />
         <ToolButton
           label="Cmd Bar"
@@ -355,9 +410,9 @@ export function AppShell() {
           onClick={() => setShowWorkspaceManager(true)}
         />
         <ToolButton
-          label="History"
-          shortcut="⌘H"
-          onClick={() => setShowSessionHistory(true)}
+          label="Processes"
+          shortcut="⌘⇧P"
+          onClick={() => setShowProcesses((v) => !v)}
         />
         <div style={{ width: 1, height: 16, backgroundColor: "#292e42" }} />
         <ToolButton
@@ -366,9 +421,6 @@ export function AppShell() {
           onClick={() => setShowSettings(true)}
         />
         <div style={{ flex: 1 }} />
-        <Tooltip helpId="close-pane">
-          <ToolButton label="Close" shortcut="⌘W" onClick={handleClosePane} />
-        </Tooltip>
         <ToolButton
           label="?"
           shortcut="⌘?"
@@ -376,15 +428,32 @@ export function AppShell() {
         />
       </div>
 
-      {/* Layout area */}
-      <div style={{ flex: 1, overflow: "hidden", padding: 2 }}>
-        {viewMode === "grid" ? (
-          <GridView />
-        ) : (
-          layout && <SplitPane node={layout} />
-        )}
+      {/* Main content: sidebar + layout */}
+      <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
+        {sidebarOpen && <ProjectSidebar />}
+        <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          {hasAgents ? <GridView /> : <GlobalWelcome />}
+          {showProcesses && (
+            <div style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 10,
+              backgroundColor: "#1a1b26",
+            }}>
+              <ProcessesView onClose={() => setShowProcesses(false)} />
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* Floating panes */}
+      {floatingPanes
+        .filter((fp) => !fp.collapsed)
+        .map((fp) => (
+          <FloatingPane key={fp.paneId} state={fp} />
+        ))}
+
+      <CollapsedBar />
       <StatusBar />
 
       {/* Command bar */}
@@ -397,10 +466,7 @@ export function AppShell() {
       {showAgentModal && (
         <AgentConfigModal
           onSubmit={handleAgentSubmit}
-          onCancel={() => {
-            setShowAgentModal(false);
-            setPendingAction(null);
-          }}
+          onCancel={() => setShowAgentModal(false)}
         />
       )}
 
@@ -417,11 +483,6 @@ export function AppShell() {
         <WorkspaceManager onClose={() => setShowWorkspaceManager(false)} />
       )}
 
-      {/* Session history */}
-      {showSessionHistory && (
-        <SessionHistory onClose={() => setShowSessionHistory(false)} />
-      )}
-
       {/* Settings */}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
@@ -431,6 +492,9 @@ export function AppShell() {
       {showHelp && (
         <HelpOverlay onClose={() => setShowHelp(false)} />
       )}
+
+      {/* Dev debug bar */}
+      <DebugBar />
     </div>
   );
 }
@@ -473,11 +537,106 @@ function ToolButton({
       <ShadTooltipTrigger render={<button onClick={onClick} style={btnStyle} />}>
         {label}
       </ShadTooltipTrigger>
-      <ShadTooltipContent side="bottom">
-        <kbd data-slot="kbd" className="inline-flex items-center rounded border border-border bg-muted px-2 py-1 font-mono text-xs font-medium text-muted-foreground">
-          {shortcut}
-        </kbd>
+      <ShadTooltipContent side="bottom" sideOffset={8}>
+        {shortcut}
       </ShadTooltipContent>
     </ShadTooltip>
+  );
+}
+
+const welcomeIcons: Record<string, ReactNode> = Object.fromEntries(
+  Object.entries(AGENT_ICONS).map(([type, Icon]) => [type, <Icon key={type} size={20} />])
+);
+
+function GlobalWelcome() {
+  const handleSpawn = async (type: string) => {
+    const config = createAgentConfig(type as any);
+    const session = await createAgent(config);
+    const { addTab } = await import("../../stores/useWorkspaceStore");
+    addTab(session.id);
+  };
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 24,
+        backgroundColor: "#1a1b26",
+      }}
+    >
+      <div style={{ textAlign: "center" }}>
+        <h2
+          style={{
+            fontSize: 24,
+            fontWeight: 600,
+            color: "#c0caf5",
+            margin: "0 0 8px",
+            fontFamily: "monospace",
+          }}
+        >
+          Terminator
+        </h2>
+        <p style={{ fontSize: 13, color: "#565f89", margin: 0, fontFamily: "monospace" }}>
+          Launch a session to get started
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: 10,
+          width: "100%",
+          maxWidth: 360,
+        }}
+      >
+        {Object.values(AGENT_REGISTRY).map((def) => (
+          <button
+            key={def.type}
+            onClick={() => handleSpawn(def.type)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "12px 16px",
+              backgroundColor: "#16161e",
+              border: "1px solid #292e42",
+              borderRadius: 8,
+              color: "#a9b1d6",
+              fontSize: 13,
+              fontFamily: "monospace",
+              cursor: "pointer",
+              textAlign: "left",
+              transition: "border-color 0.15s, background-color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = def.color;
+              (e.currentTarget as HTMLElement).style.backgroundColor = "#1a1b26";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = "#292e42";
+              (e.currentTarget as HTMLElement).style.backgroundColor = "#16161e";
+            }}
+          >
+            <span style={{ color: def.color }}>
+              {welcomeIcons[def.type]}
+            </span>
+            <div>
+              <div style={{ fontWeight: 600, color: "#c0caf5" }}>{def.label}</div>
+              <div style={{ fontSize: 11, color: "#565f89", marginTop: 2 }}>{def.description}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 11, color: "#414868", fontFamily: "monospace" }}>
+        <span style={{ color: "#565f89" }}>Tip:</span> ⌘D split · ⇧⌘D vertical · ⌘T new tab
+      </div>
+    </div>
   );
 }

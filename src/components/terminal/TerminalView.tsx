@@ -1,14 +1,17 @@
 import { useRef, useCallback, useEffect, useState, useImperativeHandle, forwardRef } from "react";
 import { useTerminal } from "./useTerminal";
-import { setAgentState, agentStore$ } from "../../stores/useAgentStore";
+import { setAgentState } from "../../stores/useAgentStore";
+import { $themeName } from "../../stores/useSettingsStore";
+import { getThemeByName } from "../../lib/themes";
 import { forwardOutput } from "../../stores/usePipeStore";
-import { appendSessionOutput } from "../../lib/tauri-commands";
 import { TerminalSearch } from "./TerminalSearch";
 import type { SearchAddon } from "@xterm/addon-search";
 
 interface TerminalViewProps {
   paneId: string;
   agentBackendId: string | null;
+  agentType?: string;
+  bgColor?: string;
 }
 
 export interface TerminalViewHandle {
@@ -17,7 +20,7 @@ export interface TerminalViewHandle {
 }
 
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
-  function TerminalView({ paneId, agentBackendId }, ref) {
+  function TerminalView({ paneId, agentBackendId, agentType, bgColor }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [searchVisible, setSearchVisible] = useState(false);
@@ -29,34 +32,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       }, 3000);
     }, [paneId]);
 
-    // Batch session log writes
-    const logBufferRef = useRef("");
-    const logTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const flushLog = useCallback(() => {
-      const agent = agentStore$.getValue().agents[paneId];
-      if (agent?.backendId && logBufferRef.current) {
-        appendSessionOutput(agent.backendId, logBufferRef.current).catch(() => {});
-        logBufferRef.current = "";
-      }
-    }, [paneId]);
-
     const handleOutput = useCallback(
       (data: string) => {
         setAgentState(paneId, "running");
         scheduleIdle();
         forwardOutput(paneId, data);
-
-        // Buffer log writes (flush every 500ms)
-        logBufferRef.current += data;
-        if (!logTimerRef.current) {
-          logTimerRef.current = setTimeout(() => {
-            flushLog();
-            logTimerRef.current = null;
-          }, 500);
-        }
       },
-      [paneId, scheduleIdle, flushLog]
+      [paneId, scheduleIdle]
     );
 
     const handleExit = useCallback(() => {
@@ -67,9 +49,23 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     const { terminal, searchAddon } = useTerminal(containerRef, {
       agentBackendId,
       paneId,
+      agentType,
       onOutput: handleOutput,
       onExit: handleExit,
     });
+
+    // Apply per-pane background color override
+    useEffect(() => {
+      const term = terminal.current;
+      if (!term) return;
+      if (bgColor) {
+        term.options.theme = { ...term.options.theme, background: bgColor };
+      } else {
+        // Reset to theme default
+        const theme = getThemeByName($themeName.getValue());
+        term.options.theme = { ...term.options.theme, background: theme.terminal.background };
+      }
+    }, [bgColor, terminal]);
 
     useImperativeHandle(ref, () => ({
       toggleSearch: () => setSearchVisible((v) => !v),

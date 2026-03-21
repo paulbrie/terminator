@@ -165,14 +165,6 @@ export const HELP_ENTRIES: HelpEntry[] = [
       "Save the current layout and agent configuration to disk. Restore saved workspaces to rebuild your setup instantly.",
   },
   {
-    id: "session-history",
-    category: "Workspaces",
-    title: "Session History",
-    shortcut: "⌘H",
-    description:
-      "Browse past agent sessions with full terminal output logs. Sessions are recorded automatically.",
-  },
-  {
     id: "settings",
     category: "Workspaces",
     title: "Settings",

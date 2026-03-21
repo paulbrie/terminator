@@ -21,3 +21,31 @@ export interface Tab {
   label: string;
   rootNode: LayoutNode;
 }
+
+export interface Task {
+  id: string;
+  title: string;
+  done: boolean;
+  createdAt: number;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  color?: string;
+  folder?: string;
+  defaultCommand?: string;
+  defaultBgColor?: string;
+  paneIds: string[];
+  tasks: Task[];
+}
+
+export interface FloatingPaneState {
+  paneId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  collapsed: boolean;
+  zIndex: number;
+}

@@ -14,6 +14,7 @@ pub struct AgentConfig {
     pub working_directory: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct AgentHandle {
     pub id: String,
     pub config: AgentConfig,

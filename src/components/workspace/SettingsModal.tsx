@@ -1,11 +1,13 @@
 import { useSettingsStore } from "../../stores/useSettingsStore";
+import { FontPicker } from "./FontPicker";
+import { ThemePicker } from "./ThemePicker";
 
 interface SettingsModalProps {
   onClose: () => void;
 }
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
-  const { uiFontSize, termFontSize, setUIFontSize, setTermFontSize } = useSettingsStore();
+  const { uiFontSize, termFontSize, termFontFamily, themeName, setUIFontSize, setTermFontSize, setTermFontFamily, setThemeName } = useSettingsStore();
 
   return (
     <div
@@ -28,14 +30,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           border: "1px solid #292e42",
           borderRadius: 8,
           padding: 24,
-          width: 380,
+          width: 480,
+          maxHeight: "85vh",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         <h3 style={{ margin: "0 0 20px", fontSize: 15, color: "#c0caf5" }}>
           Settings
         </h3>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", flex: 1 }}>
           <FontSizeControl
             label="UI Font Size"
             value={uiFontSize}
@@ -50,13 +56,17 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             min={8}
             max={32}
           />
+
+          <FontPicker value={termFontFamily} onChange={setTermFontFamily} />
+
+          <ThemePicker value={themeName} onChange={setThemeName} />
         </div>
 
-        <p style={{ fontSize: 11, color: "#565f89", margin: "16px 0 0", fontFamily: "monospace" }}>
+        <p style={{ fontSize: 11, color: "#565f89", margin: "16px 0 0", fontFamily: "monospace", flexShrink: 0 }}>
           Tip: Use Cmd+= / Cmd+- to quickly adjust all font sizes.
         </p>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, flexShrink: 0 }}>
           <button onClick={onClose} style={btnStyle}>
             Done
           </button>

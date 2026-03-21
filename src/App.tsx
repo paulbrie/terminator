@@ -1,5 +1,13 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ReactNode, useEffect } from "react";
 import { AppShell } from "./components/layout/AppShell";
+import { DetachedPaneShell, parseDetachedParams } from "./components/layout/DetachedPaneShell";
+import { DetachedProjectShell, parseDetachedProjectParams } from "./components/layout/DetachedProjectShell";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+declare const __BUILD_TIMESTAMP__: string;
+
+const detachedParams = parseDetachedParams();
+const detachedProjectParams = parseDetachedProjectParams();
 
 class ErrorBoundary extends Component<
   { children: ReactNode },
@@ -23,6 +31,32 @@ class ErrorBoundary extends Component<
 }
 
 export default function App() {
+  useEffect(() => {
+    if (detachedProjectParams) {
+      getCurrentWindow().setTitle(`${detachedProjectParams.projectName} — project`);
+    } else if (detachedParams) {
+      getCurrentWindow().setTitle(`${detachedParams.agentConfig.label} — detached`);
+    } else {
+      getCurrentWindow().setTitle(`Terminator — ${__BUILD_TIMESTAMP__}`);
+    }
+  }, []);
+
+  if (detachedProjectParams) {
+    return (
+      <ErrorBoundary>
+        <DetachedProjectShell params={detachedProjectParams} />
+      </ErrorBoundary>
+    );
+  }
+
+  if (detachedParams) {
+    return (
+      <ErrorBoundary>
+        <DetachedPaneShell params={detachedParams} />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <AppShell />

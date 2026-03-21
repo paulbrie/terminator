@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::fmt;
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct AppError {
     pub message: String,
 }

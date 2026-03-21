@@ -1,7 +1,7 @@
 import { DeepSubject } from "subjecto";
 import { useDeepSubject } from "subjecto/react";
 import { sendInput } from "../lib/tauri-commands";
-import { agentStore$ } from "./useAgentStore";
+import { $agentStore } from "./useAgentStore";
 
 export interface Pipe {
   id: string;
@@ -39,7 +39,7 @@ export function togglePipe(pipeId: string) {
 
 export function forwardOutput(sourcePaneId: string, data: string) {
   const { pipes } = pipeStore$.getValue();
-  const agents = agentStore$.getValue().agents;
+  const agents = $agentStore.getValue().agents;
 
   for (const pipe of pipes) {
     if (pipe.active && pipe.sourcePaneId === sourcePaneId) {

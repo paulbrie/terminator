@@ -28,10 +28,22 @@ export function TerminalSearch({ searchAddon, visible, onClose }: TerminalSearch
   
         return;
       }
+      const opts = {
+        regex: false,
+        caseSensitive: false,
+        decorations: {
+          matchBackground: "#e0af68",
+          matchBorder: "#e0af68",
+          matchOverviewRuler: "#e0af68",
+          activeMatchBackground: "#ff9e64",
+          activeMatchBorder: "#ff9e64",
+          activeMatchColorOverviewRuler: "#ff9e64",
+        },
+      };
       if (direction === "next") {
-        searchAddon.current.findNext(q, { regex: false, caseSensitive: false });
+        searchAddon.current.findNext(q, opts);
       } else {
-        searchAddon.current.findPrevious(q, { regex: false, caseSensitive: false });
+        searchAddon.current.findPrevious(q, opts);
       }
     },
     [searchAddon]

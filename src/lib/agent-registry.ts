@@ -1,4 +1,6 @@
+import { Terminal, Bot, Cpu, Zap } from "lucide-react";
 import type { AgentType, AgentConfig } from "../types/agent";
+import type { LucideIcon } from "lucide-react";
 
 export interface AgentTypeDefinition {
   type: AgentType;
@@ -77,3 +79,11 @@ export function createAgentConfig(
 export function getAgentDef(type: AgentType): AgentTypeDefinition {
   return AGENT_REGISTRY[type];
 }
+
+/** Lucide icon component for each agent type */
+export const AGENT_ICONS: Record<AgentType, LucideIcon> = {
+  shell: Terminal,
+  claude: Bot,
+  gpt: Cpu,
+  custom: Zap,
+};
